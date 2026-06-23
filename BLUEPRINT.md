@@ -4,15 +4,16 @@
 
 O **Video AI** é uma interface GUI para gerar vídeos com inteligência artificial usando provedores em nuvem, modelos gratuitos/abertos e backends plugáveis.
 
-A proposta é criar um painel simples onde o usuário possa:
+A proposta é criar um **hub visual** onde o usuário possa:
 
 1. escrever um prompt;
 2. escolher um provedor/modelo;
-3. enviar a geração para um backend local ou em nuvem;
-4. visualizar o resultado;
-5. reaproveitar presets, histórico e workflows no futuro.
+3. configurar provedores pela própria interface;
+4. enviar a geração para um backend local ou em nuvem;
+5. visualizar o resultado;
+6. futuramente reaproveitar presets, histórico e workflows.
 
-O projeto começa como uma aplicação Python com **Gradio**, mas deve evoluir para um mini-estúdio de geração de vídeos com IA, com foco em praticidade, baixo custo e integração com provedores gratuitos quando disponíveis.
+O projeto começou como uma aplicação Python com **Gradio** e agora evoluiu para uma arquitetura com **catálogo central de provedores**, **registry runtime**, **manifesto de configuração/admin** e **interface com abas**.
 
 ---
 
@@ -30,102 +31,74 @@ Hoje existem muitos modelos e provedores de vídeo por IA, mas eles estão espal
 - demos temporárias;
 - provedores com fila, cota ou crédito grátis.
 
-O problema é que cada solução tem uma interface, configuração e formato de resposta diferente.
+Cada solução tem interface, credenciais, parâmetros e formato de resposta próprios.
 
 O **Video AI** resolve isso criando uma camada única de operação:
 
 ```txt
-Usuário → GUI → Orquestrador → Provedor escolhido → Vídeo final
+Usuário → Interface → Runtime → Registry → ProviderCatalog → Provedor → Resultado
 ```
 
-Assim, o usuário não precisa reescrever todo o fluxo quando trocar de modelo ou provedor.
+Assim, o usuário pode trocar de provedor sem refazer a interface.
 
 ---
 
-## 3. Público-alvo
+## 3. Decisão arquitetural principal
 
-### Usuário principal
+A decisão central do projeto passou a ser:
 
-Criadores, designers, social media, comunicadores e equipes que precisam gerar vídeos curtos com IA, principalmente para:
+```txt
+Interface → Runtime → ProviderRegistry → ProviderCatalog → Provider
+```
 
-- reels;
-- vídeos institucionais;
-- chamadas de eventos;
-- vídeos de notícias;
-- conteúdos internos;
-- storyboards animados;
-- testes rápidos de modelos.
+Essa separação permite que o sistema cresça sem virar um bloco de condicionais dentro da interface.
 
-### Perfil técnico esperado
+### Responsabilidades
 
-O projeto deve atender dois níveis:
+```txt
+Interface
+- Renderiza a GUI.
+- Coleta prompt, imagem, resolução, duração e seed.
+- Mostra vídeo e logs.
+- Exibe abas de configuração e diagnóstico.
 
-1. **Usuário comum:** usa a GUI, escreve prompt e gera vídeo.
-2. **Usuário técnico:** adiciona provedores, adapta APIs e cria workflows.
+Runtime
+- Fachada simples usada pela interface.
+- Lista provedores.
+- Executa geração.
+- Limpa cache de provedores.
 
----
+ProviderRegistry
+- Carrega provedores somente quando usados.
+- Mantém cache runtime.
+- Resolve o provedor padrão.
 
-## 4. Princípios do projeto
+ProviderCatalog
+- Fonte central de metadados dos provedores.
+- Declara capacidades, tipo de transporte, credenciais e status.
 
-- **GUI em primeiro lugar:** a interface deve ser simples e visual.
-- **Provedores plugáveis:** cada backend deve ser isolado em um adaptador.
-- **Baixo custo:** priorizar camadas grátis, modelos abertos e uso sob demanda.
-- **Sem dependência única:** o projeto não deve ficar preso a um só provedor.
-- **Evolução gradual:** começar simples, depois adicionar histórico, presets e workflows.
-- **Transparência:** sempre mostrar log, erro, provedor usado e resposta bruta quando possível.
-
----
-
-## 5. Escopo do MVP
-
-O MVP inicial tem como objetivo validar o fluxo completo de interface e provedores.
-
-### Incluído no MVP
-
-- Interface Gradio.
-- Campo de prompt.
-- Campo de prompt negativo.
-- Upload opcional de imagem de referência.
-- Escolha de provedor.
-- Duração do vídeo.
-- Resolução básica.
-- Seed.
-- Resultado em vídeo ou URL.
-- Log em JSON.
-- Provedor `mock` para teste local.
-- Provedor `huggingface_space` para Hugging Face Spaces.
-- Provedor `cloud_webhook` para APIs genéricas.
-
-### Fora do MVP inicial
-
-- Autenticação de usuários.
-- Fila persistente.
-- Banco de dados.
-- Histórico visual.
-- Galeria de vídeos.
-- Edição de vídeo.
-- Timeline.
-- Integração completa com ComfyUI.
-- Deploy final em produção.
+Provider
+- Implementa a chamada real ao backend.
+- Recebe GenerationRequest.
+- Retorna GenerationResult.
+```
 
 ---
 
-## 6. Arquitetura geral
+## 4. Fluxo técnico atual
 
 ```mermaid
 flowchart TD
-    A[Usuário] --> B[Interface Gradio]
+    A[Usuário] --> B[main.py / Gradio UI]
     B --> C[GenerationRequest]
-    C --> D[Orquestrador]
-    D --> E{Provedor}
-    E --> F[Mock Local]
-    E --> G[Hugging Face Space]
-    E --> H[Cloud Webhook]
-    E --> I[ComfyUI Futuro]
-    E --> J[Agnes Futuro]
-    F --> K[GenerationResult]
-    G --> K
-    H --> K
+    C --> D[video_ai.runtime]
+    D --> E[ProviderRegistry]
+    E --> F[ProviderCatalog]
+    E --> G{Provider escolhido}
+    G --> H[MockProvider]
+    G --> I[HuggingFaceSpaceProvider]
+    G --> J[CloudWebhookProvider]
+    H --> K[GenerationResult]
     I --> K
     J --> K
     K --> L[Vídeo / URL / Log]
@@ -134,149 +107,160 @@ flowchart TD
 
 ---
 
-## 7. Camadas do sistema
-
-### 7.1 Interface
+## 5. Interface atual
 
 Arquivo principal:
 
 ```txt
-app.py
+main.py
 ```
 
-Responsabilidades:
+O arquivo `app.py` foi mantido como ponto de entrada compatível:
 
-- exibir a GUI;
-- coletar prompt, configurações e imagem;
-- chamar o orquestrador;
-- exibir vídeo e log;
-- manter o fluxo simples para o usuário final.
+```txt
+python app.py
+```
 
-Componentes atuais:
+Ele apenas importa `build_app` de `main.py` e inicia a interface com as configurações carregadas.
 
-- dropdown de provedor;
-- campo de prompt;
-- campo de prompt negativo;
-- upload de imagem;
-- duração;
-- largura e altura;
-- seed;
-- botão de geração;
-- player de vídeo;
-- bloco de log JSON.
+### Abas atuais
+
+#### 5.1 Gerar vídeo
+
+Responsável pelo fluxo principal:
+
+- escolher provedor;
+- escrever prompt;
+- escrever prompt negativo;
+- enviar imagem de referência opcional;
+- definir duração;
+- definir largura e altura;
+- definir seed;
+- gerar vídeo;
+- exibir resultado e log JSON.
+
+#### 5.2 Provedores
+
+Responsável pela configuração visual:
+
+- `DEFAULT_PROVIDER`;
+- `HF_SPACE_ID`;
+- `HF_API_NAME`;
+- `HF_TOKEN`;
+- `CLOUD_WEBHOOK_URL`;
+- `CLOUD_WEBHOOK_KEY`;
+- campos futuros de Agnes;
+- URL futura do ComfyUI;
+- host e porta do Gradio.
+
+Essa aba grava as alterações no `.env` usando o manifesto de configuração.
+
+#### 5.3 Diagnóstico
+
+Responsável por exibir:
+
+- catálogo de provedores;
+- status de implementação;
+- tipo de transporte;
+- capacidades;
+- status de credencial;
+- status de endpoint;
+- snapshot da configuração carregada.
 
 ---
 
-### 7.2 Configuração
+## 6. Arquivos centrais
 
-Arquivo:
+### 6.1 `app.py`
+
+Ponto de entrada compatível para execução simples.
 
 ```txt
-video_ai/config.py
+app.py → main.build_app() → Gradio launch
 ```
+
+### 6.2 `main.py`
+
+Nova interface principal com abas.
 
 Responsabilidades:
 
-- carregar variáveis do `.env`;
-- definir provedor padrão;
-- guardar configurações do Hugging Face;
-- guardar webhook cloud;
-- definir porta e host do Gradio.
+- renderizar a GUI;
+- chamar `video_ai.runtime`;
+- salvar configurações via `admin_config`;
+- atualizar diagnóstico.
 
-Variáveis principais:
+### 6.3 `video_ai/runtime.py`
 
-```env
-DEFAULT_PROVIDER=mock
-HF_SPACE_ID=
-HF_API_NAME=/predict
-HF_TOKEN=
-CLOUD_WEBHOOK_URL=
-CLOUD_WEBHOOK_KEY=
-GRADIO_SERVER_NAME=127.0.0.1
-GRADIO_SERVER_PORT=7860
-```
+Fachada usada pela interface.
 
----
-
-### 7.3 Orquestrador
-
-Arquivo:
+Funções principais:
 
 ```txt
-video_ai/orchestrator.py
-```
-
-Responsabilidades:
-
-- registrar provedores disponíveis;
-- escolher o provedor padrão;
-- receber uma solicitação de geração;
-- enviar a solicitação ao provedor correto;
-- retornar um resultado padronizado para a interface.
-
-Fluxo:
-
-```txt
+list_providers()
+get_default_provider()
+clear_provider_cache()
 run_generation(provider_name, request)
 ```
 
----
+### 6.4 `video_ai/provider_catalog.py`
 
-### 7.4 Contrato de provedores
+Catálogo central dos provedores.
 
-Arquivo:
+Define:
 
 ```txt
-video_ai/providers/base.py
+ProviderDescriptor
+PROVIDER_CATALOG
+IMPLEMENTED_PROVIDER_IDS
+ALL_PROVIDER_IDS
 ```
 
-Entidades principais:
+### 6.5 `video_ai/providers/runtime_registry.py`
 
-#### GenerationRequest
+Registry runtime com lazy loading.
 
-Representa o pedido de geração.
+Responsável por:
 
-Campos:
+- carregar provedores sob demanda;
+- manter cache;
+- limpar cache após mudança de configuração;
+- executar geração.
 
-- `prompt`;
-- `negative_prompt`;
-- `image_path`;
-- `duration_seconds`;
-- `width`;
-- `height`;
-- `seed`;
-- `extra`.
+### 6.6 `video_ai/admin_config.py`
 
-#### GenerationResult
+Manifesto de configuração/admin.
 
-Representa a resposta da geração.
+Define:
 
-Campos:
+```txt
+ConfigSectionSpec
+ConfigFieldSpec
+SECTIONS
+FIELDS
+read_env_values()
+write_env_values()
+provider_status_rows()
+admin_snapshot()
+```
 
-- `ok`;
-- `message`;
-- `video_path`;
-- `video_url`;
-- `raw`.
+### 6.7 `video_ai/providers/base.py`
 
-#### Provider
+Contrato de geração.
 
-Contrato que todo provedor deve seguir:
+Define:
 
-```python
-class Provider:
-    name: str
-    description: str
-
-    def generate(self, request: GenerationRequest) -> GenerationResult:
-        ...
+```txt
+GenerationRequest
+GenerationResult
+Provider
 ```
 
 ---
 
-## 8. Provedores atuais
+## 7. Provedores atuais
 
-### 8.1 MockProvider
+### 7.1 MockProvider
 
 Arquivo:
 
@@ -286,19 +270,13 @@ video_ai/providers/mock.py
 
 Função:
 
-- testar a interface sem chamar nenhuma API;
+- testar a interface sem API;
 - salvar um `.txt` com o prompt enviado;
-- validar se o fluxo interno está funcionando.
+- validar o fluxo de geração.
 
-Uso recomendado:
+Status: implementado.
 
-```env
-DEFAULT_PROVIDER=mock
-```
-
----
-
-### 8.2 HuggingFaceSpaceProvider
+### 7.2 HuggingFaceSpaceProvider
 
 Arquivo:
 
@@ -309,25 +287,17 @@ video_ai/providers/huggingface_space.py
 Função:
 
 - chamar um Hugging Face Space compatível com `gradio_client`;
-- enviar o prompt para uma rota como `/predict`;
-- tentar interpretar a resposta como URL ou caminho de vídeo.
+- enviar o prompt para a rota configurada;
+- interpretar a resposta como URL ou caminho de vídeo quando possível.
 
-Uso recomendado:
+Status: implementado de forma genérica.
 
-```env
-DEFAULT_PROVIDER=huggingface_space
-HF_SPACE_ID=usuario/space-name
-HF_API_NAME=/predict
-HF_TOKEN=
-```
+Limitação:
 
-Limitação atual:
+- cada Space pode ter parâmetros diferentes;
+- para produção, serão necessários adaptadores específicos por Space/modelo.
 
-Cada Space pode exigir parâmetros diferentes. O adaptador inicial envia apenas o prompt. Para uso real, será necessário criar adaptadores específicos por Space/modelo.
-
----
-
-### 8.3 CloudWebhookProvider
+### 7.3 CloudWebhookProvider
 
 Arquivo:
 
@@ -337,154 +307,132 @@ video_ai/providers/cloud_webhook.py
 
 Função:
 
-- enviar um JSON genérico para uma API externa;
-- permitir conexão com Colab, Kaggle, n8n, RunPod, Vast, servidor próprio ou API gratuita;
-- aceitar resposta com `video_url`, `video`, `url` ou `path`.
+- enviar JSON para um endpoint HTTP;
+- conectar APIs gratuitas, Colab, Kaggle, n8n, RunPod, Vast ou servidor próprio;
+- aceitar retorno com `video_url`, `video`, `url` ou `path`.
 
-Uso recomendado:
+Status: implementado.
+
+---
+
+## 8. Provedores planejados
+
+O catálogo já prevê provedores que ainda não têm adaptador final.
+
+### 8.1 AgnesProvider
+
+Objetivo:
+
+- conectar uma API gratuita/externa de geração de vídeo;
+- receber prompt/imagem;
+- retornar vídeo.
+
+Status: planejado.
+
+### 8.2 ComfyUIProvider
+
+Objetivo:
+
+- enviar workflow JSON para ComfyUI local ou remoto;
+- substituir prompt/imagem nos nós;
+- aguardar a execução;
+- baixar ou exibir o vídeo.
+
+Status: planejado.
+
+### 8.3 Colab/Kaggle via webhook
+
+Objetivo:
+
+- rodar notebook com GPU gratuita;
+- expor endpoint temporário;
+- conectar pelo CloudWebhookProvider.
+
+Status: planejado.
+
+### 8.4 Replicate/Fal fallback
+
+Objetivo:
+
+- fallback pago ou com créditos;
+- usar quando velocidade/qualidade forem mais importantes do que gratuidade.
+
+Status: planejado.
+
+---
+
+## 9. Modelo de configuração
+
+A configuração é baseada em `.env`, mas agora pode ser editada pela aba **Provedores**.
+
+Campos principais:
 
 ```env
-DEFAULT_PROVIDER=cloud_webhook
-CLOUD_WEBHOOK_URL=https://exemplo.com/api/generate
-CLOUD_WEBHOOK_KEY=sua-chave
+DEFAULT_PROVIDER=mock
+HF_SPACE_ID=
+HF_API_NAME=/predict
+HF_TOKEN=
+CLOUD_WEBHOOK_URL=
+CLOUD_WEBHOOK_KEY=
+GRADIO_SERVER_NAME=127.0.0.1
+GRADIO_SERVER_PORT=7860
+PROVIDER_TIMEOUT_SECONDS=180
+PROVIDER_MAX_CONCURRENCY=2
+AGNES_API_KEY=
+AGNES_BASE_URL=
+COMFYUI_BASE_URL=http://127.0.0.1:8188
 ```
 
-Payload enviado:
-
-```json
-{
-  "prompt": "texto do prompt",
-  "negative_prompt": "texto negativo",
-  "duration_seconds": 5,
-  "width": 768,
-  "height": 432,
-  "seed": null,
-  "image_path": null,
-  "extra": {}
-}
-```
-
-Resposta esperada:
-
-```json
-{
-  "video_url": "https://.../video.mp4"
-}
-```
+O `admin_config.py` mantém as seções e campos em uma estrutura declarativa para a interface.
 
 ---
 
-## 9. Provedores futuros
-
-### 9.1 AgnesProvider
-
-Objetivo:
-
-- criar adaptador específico para Agnes ou outro provedor gratuito em nuvem;
-- enviar prompt/imagem;
-- receber vídeo final.
-
-Arquivo planejado:
-
-```txt
-video_ai/providers/agnes.py
-```
-
-Prioridade: alta, caso a API seja estável e documentada.
-
----
-
-### 9.2 ComfyUIProvider
-
-Objetivo:
-
-- conectar o Video AI a um ComfyUI local ou remoto;
-- enviar workflow JSON;
-- substituir nós de prompt/imagem;
-- aguardar conclusão;
-- baixar o vídeo gerado.
-
-Arquivo planejado:
-
-```txt
-video_ai/providers/comfyui.py
-```
-
-Uso ideal:
-
-```txt
-Video AI → ComfyUI API → Workflow Wan/LTX/Hunyuan → vídeo final
-```
-
----
-
-### 9.3 Colab/Kaggle Webhook
-
-Objetivo:
-
-- rodar notebook gratuito com GPU;
-- expor endpoint temporário;
-- conectar pelo `CloudWebhookProvider`.
-
-Estratégia:
-
-1. notebook inicia modelo;
-2. notebook cria API temporária;
-3. Video AI envia prompt;
-4. notebook retorna link do vídeo.
-
----
-
-### 9.4 Replicate/FalProvider
-
-Objetivo:
-
-- permitir fallback pago ou com créditos;
-- usar quando qualidade/velocidade forem mais importantes que gratuidade.
-
-Prioridade: baixa no início.
-
----
-
-## 10. Estrutura de pastas
-
-Estrutura atual:
+## 10. Estrutura atual de pastas
 
 ```txt
 video-ai/
 ├── app.py
+├── main.py
 ├── README.md
 ├── BLUEPRINT.md
 ├── requirements.txt
 ├── .env.example
 ├── .gitignore
 ├── docs/
-│   └── provedores.md
+│   ├── provedores.md
+│   └── arquitetura-runtime.md
 └── video_ai/
     ├── __init__.py
+    ├── admin_config.py
     ├── config.py
     ├── orchestrator.py
+    ├── provider_catalog.py
+    ├── runtime.py
     └── providers/
         ├── __init__.py
         ├── base.py
         ├── mock.py
         ├── huggingface_space.py
-        └── cloud_webhook.py
+        ├── cloud_webhook.py
+        ├── registry.py
+        └── runtime_registry.py
 ```
 
-Estrutura futura sugerida:
+Observação: `registry.py` foi uma tentativa inicial de registry mais tipado. O runtime atual usado pela interface é `runtime_registry.py`.
+
+---
+
+## 11. Estrutura futura sugerida
 
 ```txt
 video-ai/
 ├── app.py
-├── README.md
-├── BLUEPRINT.md
-├── requirements.txt
-├── .env.example
+├── main.py
 ├── Dockerfile
 ├── docker-compose.yml
 ├── docs/
 │   ├── provedores.md
+│   ├── arquitetura-runtime.md
 │   ├── workflows.md
 │   └── deploy.md
 ├── examples/
@@ -494,31 +442,39 @@ video-ai/
 ├── data/
 │   └── video_ai.sqlite3
 └── video_ai/
-    ├── config.py
-    ├── database.py
-    ├── orchestrator.py
-    ├── presets.py
-    ├── queue.py
+    ├── app/
+    │   └── gradio_app.py
+    ├── config/
+    │   ├── settings.py
+    │   ├── paths.py
+    │   └── provider_catalog.py
+    ├── core/
+    │   ├── request.py
+    │   ├── result.py
+    │   └── errors.py
     ├── providers/
     │   ├── base.py
+    │   ├── registry.py
     │   ├── mock.py
     │   ├── huggingface_space.py
     │   ├── cloud_webhook.py
     │   ├── agnes.py
     │   └── comfyui.py
-    └── services/
-        ├── history.py
-        ├── downloader.py
-        └── prompt_builder.py
+    ├── services/
+    │   ├── history.py
+    │   ├── downloader.py
+    │   └── prompt_builder.py
+    └── ui/
+        ├── generate_tab.py
+        ├── providers_tab.py
+        └── diagnostics_tab.py
 ```
 
 ---
 
-## 11. Modelo de dados futuro
+## 12. Modelo de dados futuro
 
 ### Tabela: generations
-
-Campos sugeridos:
 
 ```txt
 id
@@ -541,8 +497,6 @@ raw_response
 
 ### Tabela: presets
 
-Campos sugeridos:
-
 ```txt
 id
 name
@@ -559,15 +513,15 @@ updated_at
 
 ### Tabela: providers
 
-Campos sugeridos:
-
 ```txt
 id
-name
-type
+provider_id
+label
+transport_type
 is_enabled
 requires_api_key
 base_url
+capabilities
 notes
 created_at
 updated_at
@@ -575,9 +529,9 @@ updated_at
 
 ---
 
-## 12. Presets planejados
+## 13. Presets planejados
 
-### 12.1 Institucional realista
+### 13.1 Institucional realista
 
 Uso:
 
@@ -587,13 +541,7 @@ Uso:
 - infraestrutura;
 - ações públicas.
 
-### 12.2 Reels vertical
-
-Uso:
-
-- redes sociais;
-- vídeos curtos;
-- chamadas rápidas.
+### 13.2 Reels vertical
 
 Configuração sugerida:
 
@@ -603,7 +551,7 @@ height: 1024
 duration: 5s a 8s
 ```
 
-### 12.3 Notícia jornalística
+### 13.3 Notícia jornalística
 
 Uso:
 
@@ -611,7 +559,7 @@ Uso:
 - estilo reportagem;
 - cenas de apoio.
 
-### 12.4 Evento institucional
+### 13.4 Evento institucional
 
 Uso:
 
@@ -620,7 +568,7 @@ Uso:
 - chamada de agenda;
 - comunicação interna.
 
-### 12.5 Imagem para vídeo
+### 13.5 Imagem para vídeo
 
 Uso:
 
@@ -631,36 +579,37 @@ Uso:
 
 ---
 
-## 13. Fluxo de geração ideal
+## 14. Fluxo de geração ideal
 
 ```txt
 1. Usuário escolhe preset ou escreve prompt livre.
 2. Usuário escolhe provedor.
 3. Interface monta GenerationRequest.
-4. Orquestrador envia para o provider.
-5. Provider chama modelo/API.
-6. Provider retorna GenerationResult.
-7. Interface mostra vídeo e log.
-8. Sistema salva histórico.
-9. Usuário pode baixar, repetir ou ajustar.
+4. Runtime envia para ProviderRegistry.
+5. ProviderRegistry carrega ou reutiliza o provedor.
+6. Provider chama modelo/API.
+7. Provider retorna GenerationResult.
+8. Interface mostra vídeo e log.
+9. Sistema salva histórico.
+10. Usuário pode baixar, repetir ou ajustar.
 ```
 
 ---
 
-## 14. Fluxo de fallback futuro
+## 15. Fluxo de fallback futuro
 
 Quando um provedor falhar, o sistema poderá tentar outro automaticamente.
-
-Exemplo:
 
 ```txt
 Hugging Face Space falhou
 ↓
-Tentar Agnes
-↓
 Tentar Cloud Webhook
 ↓
+Tentar Agnes
+↓
 Tentar ComfyUI local/remoto
+↓
+Tentar Replicate/Fal, se configurado
 ↓
 Exibir erro final com log
 ```
@@ -668,22 +617,20 @@ Exibir erro final com log
 Configuração futura:
 
 ```env
-FALLBACK_PROVIDERS=huggingface_space,agnes,cloud_webhook,comfyui
+FALLBACK_PROVIDERS=huggingface_space,cloud_webhook,agnes,comfyui,replicate_fal
 ```
 
 ---
 
-## 15. Deploy planejado
+## 16. Deploy planejado
 
-### 15.1 Local
-
-Uso para desenvolvimento e testes.
+### 16.1 Local
 
 ```bash
 python app.py
 ```
 
-### 15.2 Hugging Face Spaces
+### 16.2 Hugging Face Spaces
 
 Uso para disponibilizar a GUI na web.
 
@@ -691,13 +638,13 @@ Arquivos necessários:
 
 ```txt
 app.py
+main.py
 requirements.txt
+video_ai/
 README.md
 ```
 
-### 15.3 Docker
-
-Uso para rodar em servidor, VPS ou ambiente controlado.
+### 16.3 Docker
 
 Arquivos planejados:
 
@@ -706,18 +653,19 @@ Dockerfile
 docker-compose.yml
 ```
 
-### 15.4 Servidor próprio
+### 16.4 Servidor próprio
 
 Uso futuro:
 
 - rodar GUI;
 - armazenar histórico;
 - conectar a APIs externas;
-- acoplar ComfyUI remoto.
+- acoplar ComfyUI remoto;
+- criar fila de geração.
 
 ---
 
-## 16. Roadmap técnico
+## 17. Roadmap técnico atualizado
 
 ### Fase 1 — MVP funcional
 
@@ -732,16 +680,27 @@ Uso futuro:
 - [x] Criar documentação inicial de provedores.
 - [x] Criar blueprint do projeto.
 
-### Fase 2 — Primeiro provedor real
+### Fase 2 — Arquitetura de provedores
+
+- [x] Criar ProviderCatalog.
+- [x] Criar ProviderDescriptor.
+- [x] Criar ProviderRegistry runtime.
+- [x] Criar runtime/fachada para interface.
+- [x] Criar manifesto admin de configuração.
+- [x] Criar aba Provedores.
+- [x] Criar aba Diagnóstico.
+- [x] Manter `python app.py` como entrada principal.
+
+### Fase 3 — Primeiro provedor real
 
 - [ ] Testar execução local com `mock`.
-- [ ] Escolher um Hugging Face Space público.
+- [ ] Escolher um Hugging Face Space público de vídeo.
 - [ ] Verificar assinatura real da API do Space.
 - [ ] Criar adaptador específico para esse Space.
 - [ ] Testar geração real de vídeo.
 - [ ] Documentar limites, fila, erros e tempo médio.
 
-### Fase 3 — Histórico e presets
+### Fase 4 — Histórico e presets
 
 - [ ] Adicionar SQLite.
 - [ ] Salvar histórico de geração.
@@ -749,15 +708,15 @@ Uso futuro:
 - [ ] Criar presets institucionais.
 - [ ] Permitir repetir geração a partir do histórico.
 
-### Fase 4 — Workflows avançados
+### Fase 5 — Workflows avançados
 
 - [ ] Integrar ComfyUI.
 - [ ] Adicionar suporte a workflow JSON.
-- [ ] Adicionar imagem de referência de verdade nos providers compatíveis.
+- [ ] Adicionar imagem de referência real nos providers compatíveis.
 - [ ] Criar fila de geração.
 - [ ] Baixar vídeos gerados automaticamente.
 
-### Fase 5 — Produto utilizável
+### Fase 6 — Produto utilizável
 
 - [ ] Docker.
 - [ ] Deploy em Hugging Face Spaces.
@@ -768,9 +727,9 @@ Uso futuro:
 
 ---
 
-## 17. Riscos e cuidados
+## 18. Riscos e cuidados
 
-### 17.1 Provedores grátis podem mudar
+### 18.1 Provedores grátis podem mudar
 
 Camadas gratuitas podem ter:
 
@@ -789,7 +748,7 @@ Mitigação:
 - criar fallback;
 - documentar provedores testados.
 
-### 17.2 Cada modelo tem parâmetros diferentes
+### 18.2 Cada modelo tem parâmetros diferentes
 
 Alguns modelos exigem:
 
@@ -808,7 +767,7 @@ Mitigação:
 - usar `extra` para parâmetros específicos;
 - criar adaptadores dedicados quando necessário.
 
-### 17.3 Uso institucional
+### 18.3 Uso institucional
 
 Para uso em comunicação pública ou institucional, verificar:
 
@@ -820,21 +779,33 @@ Para uso em comunicação pública ou institucional, verificar:
 
 ---
 
-## 18. Critérios de sucesso
+## 19. Pendências técnicas conhecidas
 
-O projeto será considerado funcional quando conseguir:
-
-1. abrir uma GUI local sem erro;
-2. gerar em modo `mock`;
-3. conectar pelo menos um provedor real gratuito ou com camada grátis;
-4. retornar um vídeo exibível na interface;
-5. salvar histórico básico;
-6. permitir trocar de provedor sem alterar a interface;
-7. documentar claramente como configurar cada backend.
+- Testar execução local do app.
+- Corrigir ou remover `video_ai/providers/registry.py`, que foi uma tentativa anterior e não é a versão usada pela interface.
+- Atualizar `.env.example` com os novos campos quando o conector permitir.
+- Atualizar README principal com a nova arquitetura quando o conector permitir.
+- Criar testes mínimos para `provider_catalog`, `admin_config` e `runtime_registry`.
 
 ---
 
-## 19. Comando de execução
+## 20. Critérios de sucesso
+
+O projeto será considerado funcional quando conseguir:
+
+1. abrir a GUI local sem erro;
+2. gerar em modo `mock`;
+3. salvar e recarregar configuração pela aba Provedores;
+4. mostrar diagnóstico correto dos provedores;
+5. conectar pelo menos um provedor real gratuito ou com camada grátis;
+6. retornar um vídeo exibível na interface;
+7. salvar histórico básico;
+8. permitir trocar de provedor sem alterar a interface;
+9. documentar claramente como configurar cada backend.
+
+---
+
+## 21. Comando de execução
 
 ```bash
 git clone https://github.com/henrkecrz/video-ai.git
@@ -860,14 +831,6 @@ python app.py
 
 ---
 
-## 20. Decisão arquitetural principal
+## 22. Norte do produto
 
-A decisão mais importante do projeto é separar a aplicação em três partes:
-
-```txt
-Interface → Orquestrador → Provedores
-```
-
-Essa separação permite que o Video AI comece simples, mas cresça para suportar novos modelos, APIs e workflows sem refazer a interface.
-
-O projeto não deve ser apenas um gerador fixo de vídeo. Ele deve ser um **hub visual de geração de vídeos com IA**.
+O Video AI não deve ser apenas um gerador fixo de vídeo. Ele deve evoluir para um **hub visual de geração de vídeos com IA**, capaz de conectar provedores gratuitos, workflows locais/remotos, APIs externas e presets institucionais em uma única interface.
